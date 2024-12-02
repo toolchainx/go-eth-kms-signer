@@ -28,6 +28,7 @@ var logger = log15.New("module", "ether_signer")
 type EtherSigner interface {
 	// SignTypedData - Sign typed data
 	SignTypedData(typedData apitypes.TypedData) (sig []byte, err error)
+	Sign(digestHash []byte) (sig []byte, err error)
 	GetAddress() string
 }
 
@@ -63,7 +64,11 @@ func (w *Wallet) SignTypedData(typedData apitypes.TypedData) (sig []byte, err er
 	if err != nil {
 		return
 	}
-	sig, err = crypto.Sign(hash.Bytes(), w.PrivateKey)
+	return w.Sign(hash.Bytes())
+}
+
+func (w *Wallet) Sign(digestHash []byte) (sig []byte, err error) {
+	sig, err = crypto.Sign(digestHash, w.PrivateKey)
 	if err != nil {
 		return
 	}
@@ -119,12 +124,16 @@ func NewGcpKmsSigner(hexAddress string, keyVersionName string) (*GcpKmsSigner, e
 }
 
 // SignTypedData - Sign typed data
-func (k *GcpKmsSigner) SignTypedData(typedData apitypes.TypedData) ([]byte, error) {
+func (k *GcpKmsSigner) SignTypedData(typedData apitypes.TypedData) (sig []byte, err error) {
 	hash, err := EncodeForSigning(typedData)
 	if err != nil {
 		return nil, err
 	}
 
+	return k.Sign(hash.Bytes())
+}
+
+func (k *GcpKmsSigner) Sign(digestHash []byte) ([]byte, error) {
 	client, err := kms.NewKeyManagementClient(context.Background())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kms client: %w", err)
@@ -139,10 +148,10 @@ func (k *GcpKmsSigner) SignTypedData(typedData apitypes.TypedData) ([]byte, erro
 		Name: k.KeyVersionName,
 		Digest: &kmspb.Digest{
 			Digest: &kmspb.Digest_Sha256{
-				Sha256: hash.Bytes(),
+				Sha256: digestHash,
 			},
 		},
-		DigestCrc32C: wrapperspb.Int64(int64(crc32c(hash.Bytes()))),
+		DigestCrc32C: wrapperspb.Int64(int64(crc32c(digestHash))),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign: %w", err)
@@ -190,7 +199,7 @@ func (k *GcpKmsSigner) SignTypedData(typedData apitypes.TypedData) ([]byte, erro
 	var recoverErr error
 	for recoveryID := byte(0); recoveryID < 2; recoveryID++ {
 		sig[64] = recoveryID
-		pubKey, err := crypto.SigToPub(hash.Bytes(), sig[:])
+		pubKey, err := crypto.SigToPub(digestHash, sig[:])
 		if err != nil {
 			recoverErr = err
 			continue
